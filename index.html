@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<style>
+    body {
+        font: 10px sans-serif;
+    }
+
+    .axis line {
+        fill: none;
+        stroke: #000;
+        shape-rendering: crispEdges;
+    }
+
+    .y_axis {
+        fill: none;
+        stroke: #121212;
+        shape-rendering: crispEdges;
+    }
+</style>
+
+<head>
+    <meta charset="utf-8" />
+</head>
+
+<body>
+    <h2>Patient Encounters with Symptom Information</h2>
+    <button id="numEncountersPostTBI">Sort By Number of Encounters Post TBI (Ascending)</button>
+    <button id="numEncountersPreTBI">Sort By Number of Encounters Pre TBI (Ascending)</button>
+    <button id="ageAtTBI">Sort By Age at TBI (Ascending)</button>
+
+    <!-- <button id="sortDescending">Sort Descending</button> -->
+    <svg width="1250" height="650"></svg>
+</body>
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3-legend/2.25.6/d3-legend.js"></script>
+<script>
+
+    var svg = d3.select("svg")
+    margin = { top: 0, right: 20, bottom: 85, left: 0 }
+    width = svg.attr("width") - margin.left - margin.right
+    height = svg.attr("height") - margin.top - margin.bottom
+    svg.attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+    var patientsHash = {};
+    var symptoms = ["Alzheimer", "Anxiety", "Audiology", "Cognitive", "Depression", "Endocrine", "Headache", "Neurologic", "NON_skull_inj", "PTSD", "PCS", "Skull_inj", "Sleep", "Speech", "Stress"]
+    var patients = [];
+    d3.csv("ehr.csv", function (data) {
+        data.forEach(encounter => {
+            if (!patientsHash[encounter.PatientID]) {
+                patientsHash[encounter.PatientID] = { encountersPreTBI: [], encountersPostTBI: [] };
+            } else {
+                if (encounter.Days_From1stTBI >= 0) {
+                    patientsHash[encounter.PatientID].encountersPostTBI.push(encounter);
+                } else {
+                    patientsHash[encounter.PatientID].encountersPreTBI.push(encounter);
+                }
+
+            }
+        });
+        var color = d3.scaleBand()
+            .range(d3.scaleOrdinal(d3.schemeCategory20c).range())
+
+        color.domain(symptoms);
+
+
+        function getFirstPosSymptom(encounter) {
+            for (var s in symptoms) {
+                if (encounter[symptoms[s]] == 1) {
+                    return symptoms[s];
+                }
+            }
+            return "No Symptoms Present";
+        }
+        function getColorFromSymptom(symp) {
+            var colors = d3.scaleOrdinal(d3.schemeCategory20c).range();
+            var index = symptoms.findIndex(s => s === symp);
+            if (index == -1) {
+                //No Symptoms Present
+                return "#999999";
+            }
+            return colors[index];
+        }
+
+        var maxPreEncounters = 0
+        var maxPostEncounters = 0
+        var encounterWidth = 5;
+
+        for (var key in patientsHash) {
+            var patient = patientsHash[key];
+            patient.PatientID = key;
+            maxPostEncounters = patient.encountersPostTBI.length > maxPostEncounters ? patient.encountersPostTBI.length : maxPostEncounters;
+            maxPreEncounters = patient.encountersPreTBI.length > maxPreEncounters ? patient.encountersPreTBI.length : maxPreEncounters;
+            patient.encountersPreTBI.sort((patient1, patient2) => patient1.Days_From1stTBI - patient2.Days_From1stTBI);
+            patient.encountersPostTBI.sort((patient1, patient2) => patient1.Days_From1stTBI - patient2.Days_From1stTBI)
+            postTBIBoxes = patient.encountersPostTBI.map((encounter, index) => {
+                var symptom = getFirstPosSymptom(encounter)
+                return {
+                    symptom: symptom,
+                    color: getColorFromSymptom(symptom),
+                    x: index,
+                    width: encounterWidth
+                }
+            });
+            preTBIBoxes = patient.encountersPreTBI.map((encounter, index) => {
+                var symptom = getFirstPosSymptom(encounter)
+                return {
+                    symptom: symptom,
+                    color: getColorFromSymptom(symptom),
+                    x: -1 * index,
+                    width: encounterWidth
+                }
+            });
+            patient.boxes = postTBIBoxes.concat(preTBIBoxes);
+            patients.push(patient);
+        }
+
+        var y = d3.scaleBand()
+            .range([height, 0])
+            .padding(0.2);
+
+        var x = d3.scaleLinear()
+            .range([0, width]);
+
+        var xAxis = d3.axisBottom(x);
+        var yAxis = d3.axisLeft(y);
+
+        //Map the domains to the axis
+        x.domain([-1 * maxPreEncounters, maxPostEncounters]);
+        y.domain(patients.map(patient => patient.PatientID));
+
+        //setup the graph
+        var patient_setup = svg.selectAll(".patient")
+            .data(patients)
+            .enter().append("g")
+            .attr("class", "bar")
+            .attr("transform", function (d) { return "translate(65," + y(d.PatientID) + ")"; });
+
+        //add each  bar
+        var bars = patient_setup.selectAll("rect")
+            .data(function (d) { return d.boxes; })
+            .enter().append("g").attr("class", "subbar");
+
+
+
+        //add the bar segments for each bar
+        bars.append("rect")
+            .attr("height", y.bandwidth())
+            .attr("x", function (d) { return x(d.x); })
+
+            .attr("width", function (d) { return encounterWidth; })
+            .style("fill", function (d) { return d.color; });
+
+        //Add the gray rectangles underneat
+        patient_setup.insert("rect", ":first-child")
+            .attr("height", y.bandwidth())
+            .attr("x", "1")
+            .attr("width", width)
+            .attr("fill-opacity", "1")
+            .style("fill", "#F9F9F9")
+            .attr("class", function (d, index) { return index % 2 == 0 ? "even" : "uneven"; });
+
+
+        //Add the line at 0
+        svg.append("g")
+            .attr("class", "y_axis")
+            .append("line")
+            .attr("x1", x(0) + 0.5)
+            .attr("x2", x(0) + 0.5)
+            .attr("transform", "translate(65,0)")
+            .attr("y2", height);
+
+        //Add the x axis
+        svg.append("g")
+            .attr("class", "x axis")
+            .attr("transform", function (d) { return "translate(65," + height + ")"; })
+            .call(xAxis);
+
+        // x axis label
+        svg.append("text")
+            .attr("x", width / 2)
+            .attr("y", height + margin.bottom - 55)
+            .style("text-anchor", "middle")
+            .text("Number of Encounters (Negative is Pre TBI)");
+
+        //Add the y axis
+        svg.append("g")
+            .attr("class", "y axis")
+            .attr("transform", "translate(65,0)")
+            .call(yAxis);
+
+        //y axis label
+        svg.append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("y", 0)
+            .attr("x", 0 - (height / 2))
+            .attr("dy", "1em")
+            .style("text-anchor", "middle")
+            .text("Patient");
+
+        //Set up a scale for the legend
+        var ordinal = d3.scaleOrdinal()
+            .domain(symptoms)
+            .range(d3.schemeCategory20c);
+
+        //Place the legend box
+        svg.append("g")
+            .attr("class", "legendOrdinal")
+            .attr("transform", "translate(" + width * .2 + "," + height * 1.07 + ")");
+
+        //Inflate the legend
+        var legendOrdinal = d3.legendColor()
+            .orient("horizontal")
+            // .shape("path", d3.symbol().type(d3.symbolTriangle).size(150)())
+            .shapePadding(40)
+            //use cellFilter to hide the "e" cell
+            .cellFilter(function (d) { return d.label !== "e" })
+            .scale(ordinal);
+
+        svg.select(".legendOrdinal")
+            .call(legendOrdinal);
+
+
+
+        d3.select("#numEncountersPostTBI")
+            .on("click", function () {
+                sorted = patients.sort((patientA, patientB) => patientA.encountersPostTBI.length - patientB.encountersPostTBI.length);
+                y.domain(sorted.map(patient => patient.PatientID));
+
+                patient_setup.sort((patientA, patientB) => patientA.encountersPostTBI.length - patientB.encountersPostTBI.length)
+                    .transition()
+                    .delay(function (d, i) {
+                        return i * 50;  // gives it a smoother effect
+                    })
+                    .duration(1000)
+                    .attr("transform", function (d, i) {
+                        console.log(d);
+                        return "translate(65," + y(d.PatientID) + ")";
+                    });
+
+            });
+        d3.select("#numEncountersPreTBI")
+            .on("click", function () {
+                sorted = patients.sort((patientA, patientB) => patientA.encountersPreTBI.length - patientB.encountersPreTBI.length);
+                y.domain(sorted.map(patient => patient.PatientID));
+
+                patient_setup.sort((patientA, patientB) => patientA.encountersPreTBI.length - patientB.encountersPreTBI.length)
+                    .transition()
+                    .delay(function (d, i) {
+                        return i * 50;  // gives it a smoother effect
+                    })
+                    .duration(1000)
+                    .attr("transform", function (d, i) {
+                        console.log(d);
+                        return "translate(65," + y(d.PatientID) + ")";
+                    });
+
+            });
+        d3.select("#ageAtTBI")
+            .on("click", function () {
+                sorted = patients.sort((patientA, patientB) => patientA.encountersPreTBI[0].Age_TBI - patientB.encountersPreTBI[0].Age_TBI);
+                y.domain(sorted.map(patient => patient.PatientID));
+
+                patient_setup.sort((patientA, patientB) => patientA.encountersPreTBI[0].Age_TBI - patientB.encountersPreTBI[0].Age_TBI)
+                    .transition()
+                    .delay(function (d, i) {
+                        return i * 50;  // gives it a smoother effect
+                    })
+                    .duration(1000)
+                    .attr("transform", function (d, i) {
+                        console.log(d);
+                        return "translate(65," + y(d.PatientID) + ")";
+                    });
+
+            });
+
+
+    });
+
+</script>
